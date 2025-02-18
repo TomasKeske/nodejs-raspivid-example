@@ -1,17 +1,18 @@
 
 const express = require('express');
-const WebSocketServer = require('ws').Server;
+const WebSocket = require('ws');
 const raspividStream = require('raspivid-stream');
 const fs = require('fs');;
 const app = express();
-const http = express();
 const wss = require('express-ws')(app);
 const ffmpeg = require('fluent-ffmpeg');
 
 var vstreamCounter = 0;
-var writeStream = null;
 var location = null;
-
+var writeStream = null;
+var filename = null;
+var location = null;
+var videoStream = null;
 
 app.ws('/vstream', async (ws, req) => {
     console.log('Client connected');
@@ -24,55 +25,23 @@ app.ws('/vstream', async (ws, req) => {
          height: 480
     }));
 
-    var d = new Date();
-    var filename = "record_" +
-    d.getFullYear() + "-" +
-    ("00" + (d.getMonth() + 1)).slice(-2) + "-" +
-    ("00" + d.getDate()).slice(-2) + "_" +
-    ("00" + d.getHours()).slice(-2) + ":" +
-    ("00" + d.getMinutes()).slice(-2) + ":" +
-    ("00" + d.getSeconds()).slice(-2) + ".h264";
-
-    filename = filename.replace(/["']/g, "");
-
-    var videoStream = await raspividStream();
-    var recordCnt = 0;
+    videoStream = await raspividStream();
 
     videoStream.on('data', (data) => {
-        ws.send(data, { binary: true }, (error) => { if (error) console.error(error); });
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(data, { binary: true }, (error) => { if (error) {console.error(error)/* process.exit()*/;}  });
 
-        ws.on("message", (msg) => {
-
-            console.log(msg.toString());
-
-            if (msg.toString() === "record"){
-
-                if (recordCnt == 0){
-                    writeStream = fs.createWriteStream(filename);
-                }
-                recordCnt = recordCnt +1;
-                writeStream.write(data);
-            }
-
-            if (msg.toString() === "stoprecord"){
-                writeStream.end();
-            }
-        });
-    });
-
-    ws.on('close', () => {
-        console.log('Client left');
-        videoStream.removeAllListeners('data');
-
-        vstreamCounter = vstreamCounter - 1;
-
-        console.log(vstreamCounter);
-
-        if (vstreamCounter === 0){
-            process.exit();
+            ws.on("message", async (msg) => {
+                await messageHandling(msg, data);
+            });
         }
-
     });
+
+    if (ws.readyState === WebSocket.OPEN) {
+        ws.on('close', async () => {
+            await closing(videoStream);
+        });
+     }
 });
 
 app.ws('/vstream-90', async (ws, req) => {
@@ -87,63 +56,26 @@ app.ws('/vstream-90', async (ws, req) => {
          rotation: 90
     }));
 
-    var d = new Date();
-    var filename = "record_" +
-    d.getFullYear() + "-" +
-    ("00" + (d.getMonth() + 1)).slice(-2) + "-" +
-    ("00" + d.getDate()).slice(-2) + "_" +
-    ("00" + d.getHours()).slice(-2) + ":" +
-    ("00" + d.getMinutes()).slice(-2) + ":" +
-    ("00" + d.getSeconds()).slice(-2) + ".h264";
-
-    filename = filename.replace(/["']/g, "");
-
-    var recordCnt90 = 0;
-    var videoStream = await raspividStream({ rotation: 90 });
+    videoStream = await raspividStream({ rotation: 90 });
 
     videoStream.on('data', (data) => {
-        ws.send(data, { binary: true }, (error) => { if (error) {console.error(error); /*process.exit();*/}  });
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(data, { binary: true }, (error) => { if (error) {console.error(error)/* process.exit()*/;}  });
 
-        ws.on("message", (msg) => {
-
-            console.log(msg.toString());
-
-            if (msg.toString() === "record"){
-
-                if (recordCnt90 == 0){
-                    writeStream = fs.createWriteStream(filename);
-                }
-                recordCnt90 = recordCnt90 +1;
-                writeStream.write(data);
-            }
-
-            if (msg.toString() === "stoprecord"){
-                writeStream.end();
-            }
-        });
-    });
-
-    ws.on('close', () => {
-        console.log('Client left');
-        videoStream.removeAllListeners('data');
-        vstreamCounter = vstreamCounter - 1;
-
-        console.log(vstreamCounter);
-
-        if (vstreamCounter === 0){
-            process.exit();
+            ws.on("message", async (msg) => {
+                await messageHandling(msg, data);
+            });
         }
     });
+
+    if (ws.readyState === WebSocket.OPEN) {
+        ws.on('close', async () => {
+            await closing(videoStream);
+        });
+     }
 });
 
 app.ws('/vstream-180', async (ws, req) => {
-
-    app.use(express.urlencoded({ extended: true }));
-    app.post('/post-location', async (req, res) => {
-
-    location = await req.body.location;
-    console.log('Received location:', location);
-    });
 
     console.log('Client connected');
 
@@ -156,58 +88,23 @@ app.ws('/vstream-180', async (ws, req) => {
          rotation: 180
     }));
 
-    var d = new Date();
-    var filename = location +"_"+
-    d.getFullYear() + "-" +
-    ("00" + (d.getMonth() + 1)).slice(-2) + "-" +
-    ("00" + d.getDate()).slice(-2) + "_" +
-    ("00" + d.getHours()).slice(-2) + ":" +
-    ("00" + d.getMinutes()).slice(-2) + ":" +
-    ("00" + d.getSeconds()).slice(-2) + ".h264";
-
-    filename = filename.replace(/["']/g, "");
-
-    var recordCnt180 =  0;
-    var videoStream = await raspividStream({ rotation: 180 });
+    videoStream = await raspividStream({ rotation: 180 });
 
     videoStream.on('data', async (data) => {
-        ws.send(data, { binary: true }, (error) => { if (error) {console.error(error)/* process.exit()*/;}  });
 
-        ws.on("message", async (msg) => {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(data, { binary: true }, (error) => { if (error) {console.error(error)/* process.exit()*/;}  });
 
-            console.log(msg.toString());
-
-            if (msg.toString() === "record"){
-
-                if (recordCnt180 == 0){
-                    writeStream = fs.createWriteStream(filename);
-                }
-                recordCnt180 = recordCnt180 +1;
-                writeStream.write(data);
-            }
-
-            if (msg.toString() === "stoprecord"){
-                writeStream.end();
-
-            }
-        });
-    });
-
-
-    ws.on('close', async () => {
-        console.log('Client left');
-        videoStream.removeAllListeners('data');
-
-        vstreamCounter = vstreamCounter - 1;
-
-        await burnThemInClose(filename, location);
-
-        console.log(vstreamCounter);
-
-        if (vstreamCounter === 0){
-            process.exit();
+            ws.on("message", async (msg) => {
+                await messageHandling(msg, data);
+            });
         }
     });
+
+    if (ws.readyState === WebSocket.OPEN) {
+        ws.on('close', async () => {
+        await closing(videoStream);
+    });}
 });
 
 app.listen(8080, function(err){
@@ -339,4 +236,61 @@ async function burnThemInClose(filename, location){
       } catch (err) {
         console.error('Error:', err);
       }
+}
+
+function generateFileName(location) {
+    var d = new Date();
+    var filename = location +"_"+
+    d.getFullYear() + "-" +
+    ("00" + (d.getMonth() + 1)).slice(-2) + "-" +
+    ("00" + d.getDate()).slice(-2) + "_" +
+    ("00" + d.getHours()).slice(-2) + ":" +
+    ("00" + d.getMinutes()).slice(-2) + ":" +
+    ("00" + d.getSeconds()).slice(-2) + ".h264";
+
+    filename = filename.replace(/["']/g, "");
+
+    return filename;
+}
+
+async function messageHandling(msg, data){
+
+    if (msg.toString().includes("loc-")){
+        location = msg.toString().slice(4);
+        filename = generateFileName(location);
+    }
+
+    if (msg.toString() === "record"){
+
+        if (fs.existsSync(filename)) {
+            console.log('Stream exists.');
+        } else {
+            writeStream = fs.createWriteStream(filename);
+        }
+
+            writeStream.write(data);
+        }
+
+        if (msg.toString() === "stoprecord"){
+            if (writeStream) {
+                writeStream.end();
+                console.log("stopped recording");
+            }
+    }
+}
+
+async function closing(){
+    console.log('Client left');
+
+    videoStream.removeAllListeners('data');
+
+    vstreamCounter = vstreamCounter - 1;
+
+    await burnThemInClose(filename, location);
+
+    console.log(vstreamCounter);
+
+    if (vstreamCounter === 0){
+        process.exit();
+    }
 }
