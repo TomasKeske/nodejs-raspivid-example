@@ -6,16 +6,22 @@ const fs = require('fs');
 const readline = require('readline');
 const app = express();
 const wss = require('express-ws')(app);
+const { exec } = require('child_process');
+const path = require('path');
 
 var vstreamCounter = 0;
 var videoStream = null;
 var recording = false;
 var websoc = null;
 
+var currentDir = __dirname;
+var camfn = 'camera.conf';
+var p = path.join(currentDir, camfn);
 
-if (fs.existsSync('camera.conf')) {
 
-    const fileStream = fs.createReadStream('camera.conf');
+if (fs.existsSync(p)) {
+
+    const fileStream = fs.createReadStream(p);
 
     fileStream.on('error', (error) => {
       console.error(`Error reading file: ${error.message}`);
@@ -46,6 +52,36 @@ if (fs.existsSync('camera.conf')) {
     console.log("missing configuration file camera.conf");
     process.exit();
 }
+
+app.get('/camera-status', (req, res) => {
+
+    exec('vcgencmd get_camera', (error, stdout, stderr) => {
+        if (error) {
+          console.error(`Error: ${error.message}`);
+          return;
+        }
+        if (stderr) {
+          console.error(`stderr: ${stderr}`);
+          return;
+        }
+        console.log(`stdout: ${stdout}`);
+
+        var position = stdout.indexOf(",");
+
+        if (position != -1) {
+            var sbstr = stdout.substring(0, position);
+            var rgxp = new RegExp("1", 'g');
+            var occurences = sbstr.match(rgxp);
+
+            if (occurences.length == 2){
+                res.send(200);
+            } else {
+                res.send(500);
+            }
+        }
+
+      });
+  });
 
 app.ws('/vstream', async (ws, req) => {
     console.log('Client connected');
