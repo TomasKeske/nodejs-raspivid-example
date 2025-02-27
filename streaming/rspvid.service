@@ -1,0 +1,11 @@
+[Unit]
+Description=Rspvid service
+After=network.target
+
+[Service]
+ExecStart=/home/pi/rspvid/runservice.sh
+Restart=always
+User=pi
+
+[Install]
+WantedBy=multi-user.target
