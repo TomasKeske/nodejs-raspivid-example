@@ -127,8 +127,11 @@ server.on('connection', async (ws) => {
             const ffmpegCommand = `ffmpeg -i ${first[1]} -i ${second[1]} -filter_complex hstack ${first[1].slice(0,-4)+"_final.mp4"}`;
 
             await processVideos(ffmpegCommand, first[1], second[1]);
-          })(first, second);
 
+            console.log("burning subtitles");
+            await burnThemInClose(first[1].slice(0,-4)+"_final.mp4", location)
+
+          })(first, second);
 
         }
       });
@@ -191,7 +194,6 @@ async function processVideos(ffmpegCommand, firstFile, secondFile) {
 }
 
 
-
 function extractPositionNumber(filename) {
   const match = filename.match(/pos-(\d+)/);
   return match ? parseInt(match[1], 10) : null;
@@ -214,11 +216,6 @@ async function waitForFilesWithExtensionToDisappear(directory, extension) {
       await new Promise((resolve) => setTimeout(resolve, checkInterval));
   }
 }
-
-
-
-
-
 
 function generateFileName(location, view) {
     var d = new Date();
@@ -331,14 +328,11 @@ async function burnThemInClose(filename, location){
         ("00" + (d.getMonth() + 1)).slice(-2) + "-" +
         ("00" + d.getDate()).slice(-2);
 
-        var newMP4 = filename.slice(0, -5)+".mp4"
-        await reencodeVideo(filename, "static"+staticcnt+".mp4");
-
-        const metadata = await getVideoMetadata("static"+staticcnt+".mp4");
+        const metadata = await getVideoMetadata(filename);
         staticnt = staticcnt + 1;
         console.log(metadata);
         const duration = Math.floor(metadata.format.duration);
-        const outputSrt = "titulky.srt";
+        const outputSrt = staticcnt+"titulky.srt";
         const srtContent = generateSrtContent(duration, location+" "+staticTime, hhmmss);
 
         if (fs.existsSync(outputSrt)) {
@@ -347,14 +341,10 @@ async function burnThemInClose(filename, location){
 
         await writeFileAsync(outputSrt, srtContent);
 
-       // await encodeVideoWithSubtitles("static.mp4", outputSrt, newMP4);
-
-        if (fs.existsSync("static.mp4")) {
-            fs.unlinkSync("static.mp4");
-        }
+        await encodeVideoWithSubtitles(filename, outputSrt, filename.slice(0,-4)+"_wbsubs.mp4");
 
         if (fs.existsSync(filename)) {
-       //     fs.unlinkSync(filename);
+            fs.unlinkSync(filename);
         }
 
         if (fs.existsSync(outputSrt)) {
