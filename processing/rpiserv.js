@@ -11,6 +11,7 @@ const finishedAsync = promisify(finished);
 const writeFileAsync1 = promisify((stream, data, callback) => {
   stream.write(data, callback);
 });
+const execAsync = promisify(exec);
 
 const directoryPath = __dirname;
 
@@ -129,13 +130,16 @@ server.on('connection', async (ws) => {
             await processVideos(ffmpegCommand, first[1], second[1]);
 
             console.log("burning subtitles");
-            await burnThemInClose(first[1].slice(0,-4)+"_final.mp4", location)
+            await burnThemInClose(first[1].slice(0,-4)+"_final.mp4", location, extractSubstring(first[1]));
+            await burnThemInClose(second[1].slice(0,-4)+"_final.mp4", location, extractSubstring(second[1]));
+
 
           })(first, second);
-
         }
       });
+
     }
+
   });
 
 
@@ -154,6 +158,73 @@ server.on('connection', async (ws) => {
     }
   });*/
 });
+
+function extractSubstring(input) {
+  // Find the position of the second occurrence of '_'
+  const secondUnderscoreIndex = input.indexOf('_', input.indexOf('_') + 1);
+
+  // Find the position of '_cam'
+  const camIndex = input.indexOf('_cam');
+
+  // Extract the substring from the second underscore to before '_cam'
+  if (secondUnderscoreIndex !== -1 && camIndex !== -1) {
+      return input.substring(secondUnderscoreIndex + 1, camIndex);
+  }
+
+  return null; // Return null if boundaries are not found
+}
+
+
+async function concatenate(directoryPath) {
+
+  fs.readdir(directoryPath, async (err, files) => {
+    if (err) {
+        return console.error('Unable to scan directory: ' + err);
+    }
+
+  const finalfiles = files
+    .map(file => ({
+        name: file,
+        position: extractPositionNumber(file)
+    }))
+    // Filter: Include only files with a valid position and containing the required substring
+    .filter(file => file.position !== null && file.name.includes("wbsubs"))
+    // Sort files by position
+    .sort((a, b) => a.position - b.position)
+    // Extract only file names
+    .map(file => file.name);
+
+    const ffentries = Array.from(finalfiles.values());
+
+    const inputFileName = "file_list.txt";
+    const inputFileContent = ffentries.map(file => `file '${file}'`).join('\n');
+
+    fs.writeFileSync(inputFileName, inputFileContent, (err) => {
+        if (err) {
+            console.error("Error creating input file:", err);
+            return;
+        }
+    });
+
+    try {
+      const outputVideo = "klip.mp4";
+      // Step 2: Run the FFmpeg concatenate command asynchronously
+      const ffmpegCommand = `ffmpeg -f concat -safe 0 -i ${inputFileName} -c copy ${outputVideo}`;
+      const { stdout, stderr } = await execAsync(ffmpegCommand);
+
+      console.log(`FFmpeg Output:\n${stdout}`);
+      if (stderr) {
+          console.warn(`FFmpeg Warnings:\n${stderr}`);
+      }
+      console.log(`Concatenation complete. Output video: ${outputVideo}`);
+  } catch (error) {
+      console.error(`Error executing FFmpeg: ${error.message}`);
+  } finally {
+      // Step 3: Delete the temporary file_list.txt
+    //  fs.unlinkSync(inputFileName);
+      console.log(`Temporary file (${inputFileName}) deleted.`);
+  }
+  })};
 
 function execCommand(command) {
   return new Promise((resolve, reject) => {
@@ -194,6 +265,7 @@ async function processVideos(ffmpegCommand, firstFile, secondFile) {
 }
 
 
+
 function extractPositionNumber(filename) {
   const match = filename.match(/pos-(\d+)/);
   return match ? parseInt(match[1], 10) : null;
@@ -216,6 +288,11 @@ async function waitForFilesWithExtensionToDisappear(directory, extension) {
       await new Promise((resolve) => setTimeout(resolve, checkInterval));
   }
 }
+
+
+
+
+
 
 function generateFileName(location, view) {
     var d = new Date();
@@ -317,7 +394,7 @@ function getVideoMetadata(videofilename) {
 
   var staticcnt = 0;
 
-async function burnThemInClose(filename, location){
+async function burnThemInClose(filename, location, view){
     try {
         var d = new Date();
         var hhmmss = ("00" + d.getHours()).slice(-2) + ":" +
@@ -329,11 +406,11 @@ async function burnThemInClose(filename, location){
         ("00" + d.getDate()).slice(-2);
 
         const metadata = await getVideoMetadata(filename);
-        staticnt = staticcnt + 1;
+        staticcnt = staticcnt + 1;
         console.log(metadata);
         const duration = Math.floor(metadata.format.duration);
         const outputSrt = staticcnt+"titulky.srt";
-        const srtContent = generateSrtContent(duration, location+" "+staticTime, hhmmss);
+        const srtContent = generateSrtContent(duration, location+" "+view+" "+staticTime, hhmmss);
 
         if (fs.existsSync(outputSrt)) {
             fs.unlinkSync(outputSrt);
@@ -343,15 +420,21 @@ async function burnThemInClose(filename, location){
 
         await encodeVideoWithSubtitles(filename, outputSrt, filename.slice(0,-4)+"_wbsubs.mp4");
 
-        if (fs.existsSync(filename)) {
-            fs.unlinkSync(filename);
-        }
+       // if (fs.existsSync(filename)) {
+         //   fs.unlinkSync(filename);
+       // }
 
         if (fs.existsSync(outputSrt)) {
             fs.unlinkSync(outputSrt);
         }
 
         console.log('encoding finished');
+
+
+        console.log("concatenating");
+      concatenate(directoryPath);
+
+        return 1;
       } catch (err) {
         console.error('Error:', err);
       }
