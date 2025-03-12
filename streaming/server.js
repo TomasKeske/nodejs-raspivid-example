@@ -100,10 +100,12 @@ app.ws('/vstream', async (ws, req) => {
         if (ws.readyState === WebSocket.OPEN) {
             ws.send(data, { binary: true }, (error) => { if (error) {console.error(error)/* process.exit()*/;}  });
 
-            ws.on("message", async (msg) => {
-                await messageHandling(msg, null);
-            });
+
         }
+    });
+
+    ws.on("message", async (msg) => {
+        await messageHandling(msg, null);
     });
 
     if (ws.readyState === WebSocket.OPEN) {
@@ -130,11 +132,11 @@ app.ws('/vstream-90', async (ws, req) => {
     videoStream.on('data', (data) => {
         if (ws.readyState === WebSocket.OPEN) {
             ws.send(data, { binary: true }, (error) => { if (error) {console.error(error)/* process.exit()*/;}  });
-
-            ws.on("message", async (msg) => {
-                await messageHandling(msg, 90);
-            });
         }
+    });
+
+    ws.on("message", async (msg) => {
+        await messageHandling(msg, 90);
     });
 
     if (ws.readyState === WebSocket.OPEN) {
@@ -187,9 +189,17 @@ async function messageHandling(msg, rot){
         websoc.send(msg);
     }
 
+    if (msg.toString().includes("desc-")){
+        websoc.send(msg);
+    }
+
+    if (msg.toString().includes("finish")){
+        websoc.send(msg);
+    }
+
     if (msg.toString() === "record"){
 
-        if (recordLock == 0) {
+        //if (recordLock == 0) {
 
             recordLock = recordLock + 1;
 
@@ -199,23 +209,24 @@ async function messageHandling(msg, rot){
                 ss = await raspividStream();
             }
 
-            if (recording){
+           // if (recording){
 
                 ss.on('data', async (d) => {
                     if (websoc.readyState === WebSocket.OPEN) {
                         websoc.send(d, { binary: true }, (error) => { if (error) {console.error(error)/* process.exit()*/;}  });
                     }
                 });
-            }
-        }
+            //}
+        //}
     }
 
     if (msg.toString() === "stoprecord"){
-        if (recording) {
+       // if (recording) {
             recording = false;
             websoc.send("stoprecord");
             console.log("stopped recording");
-         }
+            //process.exit();
+      //   }
     }
 }
 
@@ -230,9 +241,23 @@ async function closing(){
 
     console.log(vstreamCounter);
 
-    if (vstreamCounter === 0){
+   // if (vstreamCounter === 0){
+
+        const killCommand = 'killall -9 raspivid';
+
+        exec(killCommand, (error, stdout, stderr) => {
+            if (error) {
+                console.error(`Error killing raspivid instances: ${error.message}`);
+                return;
+            }
+            if (stderr) {
+                console.warn(`killall stderr: ${stderr}`);
+            }
+            console.log('All raspivid instances have been terminated successfully.');
+        });
+
         process.exit();
-    }
+   // }
 }
 
 app.listen(8080, function(err){
