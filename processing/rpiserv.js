@@ -27,10 +27,6 @@ server.on('connection', async (ws) => {
   let view = null;
   let camcnt = 0;
 
-  ws.removeEventListener('close', () => {
-    console.log('test');
-  });
-
   ws.on('message', async (message) => {
 
     const msgStr = message.toString();
@@ -91,8 +87,9 @@ server.on('connection', async (ws) => {
       console.log('WebSocket connection closed');
     }
 
-    if (msgStr === "finish"){
 
+
+    if (msgStr === "finish"){
       const directory = __dirname;
       const extension = '.h264';
 
@@ -121,43 +118,155 @@ server.on('connection', async (ws) => {
             paired.push([entries[i], entries[i + 1]]);
         }
 
+        const unpairedElements = []; // To collect all unpaired elements
+
         for (const [first, second] of paired) {
-          console.log(`First value: ${first}, Second value: ${second}`);
+            console.log(`First value: ${first}, Second value: ${second}`);
 
-          (async (first, second) => {
-            const ffmpegCommand = `ffmpeg -i ${first[1]} -i ${second[1]} -filter_complex hstack ${first[1].slice(0,-4)+"_final.mp4"}`;
+            // Extract substrings directly from the values
+            const firstSubstring = first ? extractSubstring(first[1]) : null;
+            const secondSubstring = second ? extractSubstring(second[1]) : null;
 
-            await processVideos(ffmpegCommand, first[1], second[1]);
+            if (first && second && firstSubstring === secondSubstring) {
+                // Handle paired elements
+                (async () => {
+                    try {
+                        const outputFile = `${first[1].slice(0, -4)}_final.mp4`;
+                        const ffmpegCommand = `ffmpeg -i ${first[1]} -i ${second[1]} -filter_complex hstack ${outputFile}`;
 
-            console.log("burning subtitles");
-            await burnThemInClose(first[1].slice(0,-4)+"_final.mp4", location, extractSubstring(first[1]));
-            await burnThemInClose(second[1].slice(0,-4)+"_final.mp4", location, extractSubstring(second[1]));
+                        console.log("Processing videos with FFmpeg...");
+                        await processVideos(ffmpegCommand, first[1], second[1]);
 
-
-          })(first, second);
+                        console.log("Burning subtitles for paired elements...");
+                        await burnThemInClose(outputFile, location, firstSubstring); // For the first
+                        await burnThemInClose(outputFile, location, secondSubstring); // For the second
+                    } catch (error) {
+                        console.error("Error processing paired elements:", error.message);
+                    }
+                })();
+            } else {
+                // Handle unpaired elements (either second is undefined or no match)
+                if (first) unpairedElements.push(first);
+                if (second) unpairedElements.push(second); // This will handle cases where second exists but is unpaired
+            }
         }
+
+        // Process all unpaired elements after the main loop
+        (async () => {
+            for (const unpaired of unpairedElements) {
+                try {
+                    console.log(`Burning subtitles for unpaired element: ${unpaired[1]}...`);
+                    const unpairedSubstring = extractSubstring(unpaired[1]); // Extract substring dynamically
+                    await burnThemInClose(unpaired[1], location, unpairedSubstring);
+                    console.log("afterburner");
+                } catch (error) {
+                    console.error(`Error processing unpaired element (${unpaired[1]}):`, error.message);
+                }
+            }
+        })();
+
       });
 
-    }
+      (async () => {
+        const directoryPath = __dirname; // Replace with the path to your directory
+        const substring = 'wbsubs'; // Replace with your desired substring
+        const files = await waitForFilesWithSubstring(directoryPath, substring);
+        console.log("Detected files:", files);
+        console.log("Waiting for all .mp4 files to unlock...");
+        await waitUntilAllMp4FilesUnlocked(__dirname);
+        console.log("All .mp4 files are now ready for use!");
 
+    })();
+    }
   });
 
-
-
-/*
   ws.on('close', async () => {
-    console.log('Client disconnected');
-    if (writeStream && !writeStream.writableEnded) {
-      writeStream.end();
+    await generatefilelist(__dirname);
+    await concatenate("file_list.txt", __dirname);
+  })});
+
+async function waitUntilAllMp4FilesUnlocked(directoryPath, timeout = 30000, interval = 1000) {
+  const startTime = Date.now();
+
+  while (true) {
       try {
-        await finishedAsync(writeStream);
-        console.log('Write stream ended');
-      } catch (error) {
-        console.error('Error ending the stream:', error);
+          // Get all .mp4 files in the directory
+          const files = await fsp.readdir(directoryPath);
+          const mp4Files = files.filter(file => file.endsWith('.mp4')).map(file => path.join(directoryPath, file));
+
+          const lockedFiles = [];
+
+          // Check if each file is accessible
+          for (const filePath of mp4Files) {
+              try {
+                  // Try opening the file in read mode
+                  const fileHandle = await fsp.open(filePath, 'r');
+                  await fileHandle.close();
+              } catch (err) {
+                  // File is locked
+                  lockedFiles.push(filePath);
+              }
+          }
+
+          if (lockedFiles.length === 0) {
+              console.log("All .mp4 files are unlocked:", mp4Files);
+              return true; // Exit when all files are unlocked
+          }
+
+          console.log(`Locked .mp4 files: ${lockedFiles}. Retrying in ${interval / 1000} seconds...`);
+      } catch (err) {
+          console.error("Error checking files:", err.message);
       }
-    }
-  });*/
-});
+
+      // Timeout check
+      if (Date.now() - startTime > timeout) {
+          throw new Error(`Timeout: Some .mp4 files are still locked after ${timeout / 1000} seconds.`);
+      }
+
+      // Wait before retrying
+      await new Promise(resolve => setTimeout(resolve, interval));
+  }
+}
+
+async function waitForFilesWithSubstring(directoryPath, substring) {
+  while (true) {
+      try {
+          // Check the directory for files
+          const files = await fsp.readdir(directoryPath);
+
+          // Look for files containing the substring
+          const matchingFiles = files.filter(file => file.includes(substring));
+          if (matchingFiles.length > 0) {
+              console.log("Matching files found:", matchingFiles);
+              return matchingFiles; // Return when matching files are detected
+          }
+      } catch (err) {
+          console.error(`Error reading directory: ${err.message}`);
+      }
+
+      // Wait 1 second before checking again
+      await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+}
+
+
+async function waitForFile(filename, timeout = 10000, interval = 500) {
+  const startTime = Date.now();
+
+  while (true) {
+      try {
+          await fsp.access(filename); // Check if the file exists
+          console.log(`File '${filename}' exists!`);
+          return true;
+      } catch (err) {
+          if (Date.now() - startTime > timeout) {
+              console.error(`Timeout exceeded. File '${filename}' did not appear.`);
+              return false;
+          }
+          await new Promise(resolve => setTimeout(resolve, interval)); // Wait for the next check
+      }
+  }
+}
 
 function extractSubstring(input) {
   // Find the position of the second occurrence of '_'
@@ -174,9 +283,7 @@ function extractSubstring(input) {
   return null; // Return null if boundaries are not found
 }
 
-
-async function concatenate(directoryPath) {
-
+async function generatefilelist(directoryPath) {
   fs.readdir(directoryPath, async (err, files) => {
     if (err) {
         return console.error('Unable to scan directory: ' + err);
@@ -196,20 +303,23 @@ async function concatenate(directoryPath) {
 
     const ffentries = Array.from(finalfiles.values());
 
+    console.log("1111"+ffentries.toString());
+
     const inputFileName = "file_list.txt";
     const inputFileContent = ffentries.map(file => `file '${file}'`).join('\n');
 
-    fs.writeFileSync(inputFileName, inputFileContent, (err) => {
-        if (err) {
-            console.error("Error creating input file:", err);
-            return;
-        }
-    });
+    fs.writeFileSync('file_list.txt', inputFileContent, { encoding: 'utf8' });
+
+})};
+
+
+async function concatenate(inputFileName,directoryPath) {
+
 
     try {
       const outputVideo = "klip.mp4";
       // Step 2: Run the FFmpeg concatenate command asynchronously
-      const ffmpegCommand = `ffmpeg -f concat -safe 0 -i ${inputFileName} -c copy ${outputVideo}`;
+      const ffmpegCommand = `ffmpeg -loglevel debug -f concat -i ${inputFileName} -c copy ${outputVideo}`;
       const { stdout, stderr } = await execAsync(ffmpegCommand);
 
       console.log(`FFmpeg Output:\n${stdout}`);
@@ -224,7 +334,7 @@ async function concatenate(directoryPath) {
     //  fs.unlinkSync(inputFileName);
       console.log(`Temporary file (${inputFileName}) deleted.`);
   }
-  })};
+  };
 
 function execCommand(command) {
   return new Promise((resolve, reject) => {
@@ -291,7 +401,11 @@ async function waitForFilesWithExtensionToDisappear(directory, extension) {
 
 
 
-
+function removeDiacritics(input) {
+  return input
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+}
 
 
 function generateFileName(location, view) {
@@ -307,7 +421,10 @@ function generateFileName(location, view) {
     filename = filename.replace(/["']/g, "");
     filename = filename.replace(/:/g, "_");
     filename = filename.replace(/ /g, "_");
-
+    filename = filename.replace(/[ +]/g, '_');
+    filename = filename.replace(/[ ,]/g, '_');
+    filename = removeDiacritics(filename);
+    filename = filename.replace(/[^\w.-]/g, '_');
     return filename;
 }
 
@@ -375,7 +492,9 @@ function getVideoMetadata(videofilename) {
     });
   }
 
-  function encodeVideoWithSubtitles(inputVideo, subtitleFile, outputVideo) {
+  async function encodeVideoWithSubtitles(inputVideo, subtitleFile, outputVideo) {
+
+    await waitForFile(inputVideo);
     return new Promise((resolve, reject) => {
       ffmpeg(inputVideo)
         .outputOptions('-vf', `subtitles=${subtitleFile}`)
@@ -395,6 +514,9 @@ function getVideoMetadata(videofilename) {
   var staticcnt = 0;
 
 async function burnThemInClose(filename, location, view){
+
+    await waitForFile(filename);
+
     try {
         var d = new Date();
         var hhmmss = ("00" + d.getHours()).slice(-2) + ":" +
@@ -430,9 +552,6 @@ async function burnThemInClose(filename, location, view){
 
         console.log('encoding finished');
 
-
-        console.log("concatenating");
-      concatenate(directoryPath);
 
         return 1;
       } catch (err) {
