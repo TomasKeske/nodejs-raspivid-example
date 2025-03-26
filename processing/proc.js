@@ -55,38 +55,9 @@ server.on('connection', async (ws) => {
                 }
 
                 if (fs.existsSync("error_reenc.txt")) {
-                    const fileStream = fs.createReadStream("error_reenc.txt");
+                    await processFile("error_reenc.txt", h264Files);
 
-                    fileStream.on('error', (error) => {
-                        console.error(`Error reading file: ${error.message}`);
-                    });
 
-                    const rl = readline.createInterface({
-                    input: fileStream,
-                    crlfDelay: Infinity
-                    });
-
-                    rl.on('line', async (line) => {
-                    console.log(`Got line from file: ${line}`);
-                    const firstInteger = getFirstIntegerFromLine(line);
-
-                    for (let i = 0; i<h264Files.length; i++){
-
-                        if (i < firstInteger) {
-                            continue;
-                        }
-
-                        filename = h264Files[i];
-                        location = getLocationSubstring(filename, "_");
-
-                        await reencodeVideo(filename, filename.slice(0,-4)+"mp4", i);
-
-                       /* if (fs.existsSync(filename)) {
-                            fs.unlinkSync(filename);
-                          }*/
-                    }
-
-                  });
                 } else {
                     for (let i = 0; i<h264Files.length; i++){
                         filename = h264Files[i];
@@ -151,21 +122,23 @@ server.on('connection', async (ws) => {
                         fleg = true;
                         });
                       }
-                        if (fleg){
-                            const index = paired.findIndex(pair => pair[0] === errFiles[0] || pair[1] === errFiles[1]);
-                        }
+
+                      let tsks = [];
 
 
                       (async () => {
-                      for (const [first, second] of paired) {
+                      for (const [index, [first, second]] of paired.entries()) {
 
+                        if(fleg){
 
-                        if (fleg){
-                            if (sucnt < index) {
-                                sucnt++;
+                            let errIndex = findSubstringPairIndex(paired, errFiles[0]);
+
+                            if (index < errIndex) {
                                 continue; // Skip the current iteration
                             }
                         }
+
+                        if (!fs.existsSync("step2_completed.lock")) {
 
 
                           console.log(`First value: ${first}, Second value: ${second}`);
@@ -187,11 +160,11 @@ server.on('connection', async (ws) => {
                                       let args  = ['-i', first[1], '-i', second[1], '-filter_complex', 'hstack', outputFile];
 
                                       console.log("Processing videos with FFmpeg...");
-                                      await processVideos(args, sucnt, outputFile);
+                                      tsks.push(processVideos(args, sucnt, outputFile));
 
                                       console.log("Burning subtitles for paired elements...");
-                                      await burnThemInClose(outputFile, location, firstSubstring); // For the first
-                                      await burnThemInClose(outputFile, location, secondSubstring);
+                                      tsks.push(burnThemInClose(outputFile, location, firstSubstring)); // For the first
+                                      tsks.push(burnThemInClose(outputFile, location, secondSubstring));
                                      }
                                       // For the second
                                   } catch (error) {
@@ -205,7 +178,22 @@ server.on('connection', async (ws) => {
                           }
 
                       }
+                    }
 
+
+
+
+                    try {
+                        await Promise.all(tsks); // Wait for all asynchronous reencode tasks to finish
+                        console.log('All tasks completed successfully.');
+                        writeFileAsync('step2_completed.lock', "");
+                        if (fs.existsSync("process_log.txt")) {
+                            await fsp.unlink("process_log.txt");
+                        }
+                    } catch (error) {
+                        console.error(`Error during task execution: ${error.message}`);
+                        // Reject the Promise if any task fails
+                    }
                       // Process all unpaired elements after the main loop
 
                           for (const unpaired of unpairedElements) {
@@ -218,6 +206,9 @@ server.on('connection', async (ws) => {
                                   console.error(`Error processing unpaired element (${unpaired[1]}):`, error.message);
                               }
                           }
+
+
+
                           const directoryPath = __dirname; // Replace with the path to your directory
                           const substring = 'wbsubs'; // Replace with your desired substring
                           const files = await waitForFilesWithSubstring(directoryPath, substring);
@@ -252,6 +243,72 @@ server.on('connection', async (ws) => {
 
         }
 );
+
+function findSubstringPairIndex(array, substring) {
+    for (let i = 0; i < array.length; i++) {
+      for (let j = 0; j < array[i].length; j++) {
+        if (array[i][j].includes(substring)) {
+          return i; // Return the pair index in the main array
+        }
+      }
+    }
+    return -1; // Return -1 if no match is found
+  }
+
+async function processFile(filePath, h264Files) {
+    return new Promise((resolve, reject) => {
+        const fileStream = fs.createReadStream(filePath);
+
+        fileStream.on('error', (error) => {
+            console.error(`Error reading file: ${error.message}`);
+            reject(error);
+        });
+
+        const rl = readline.createInterface({
+            input: fileStream,
+            crlfDelay: Infinity
+        });
+
+        const tasks = [];
+
+        rl.on('line', async (line) => {
+            console.log(`Got line from file: ${line}`);
+            const startInt = getFirstIntegerFromLine(line);
+
+            for (let i = startInt; i < h264Files.length; i++) {
+                const filename = h264Files[i];
+                location = getLocationSubstring(filename, "_");
+
+                console.log(`Re-encoding video: ${filename}`);
+                tasks.push(reencodeVideo(filename, filename.slice(0, -4) + ".mp4", i));
+
+            }
+
+                tasks.push(deleteFile(filePath));
+        });
+
+        rl.on('close', async () => {
+            console.log('Finished reading lines. Waiting for all tasks to complete...');
+            try {
+                await Promise.all(tasks); // Wait for all asynchronous reencode tasks to finish
+                console.log('All tasks completed successfully.');
+                resolve(); // Resolve the Promise when all tasks are done
+            } catch (error) {
+                console.error(`Error during task execution: ${error.message}`);
+                reject(error); // Reject the Promise if any task fails
+            }
+        });
+    });
+}
+
+async function deleteFile(filePath) {
+    try {
+        await fs.unlink(filePath);
+        console.log(`File "${filePath}" was deleted successfully.`);
+    } catch (error) {
+        console.error(`Error deleting file "${filePath}":`, error.message);
+    }
+}
 
 
 
@@ -507,6 +564,11 @@ async function processVideos(args, counter, outputFile) {
                     let logData = args[1]+",,"+args[3];
                     await fsp.writeFile(logFileName, logData);
                     console.log(`Log file written: ${logFileName}`);
+
+                    if (fs.existsSync(outputFile)) {
+                        fs.unlinkSync(outputFile);
+                    }
+
                 } catch (error) {
                     console.error('Error writing log file:', error.message);
                 }
@@ -605,8 +667,16 @@ async function reencodeVideo(inputPath, outputPath, counter) {
                 // Log error details to a file
                 const errorData = `${counter}`;
                 try {
-                    await fsp.writeFile('error_reenc.txt', errorData);
-                    console.log('Error log written successfully.');
+                    if (!fs.existsSync('error_reenc.txt')) {
+                        await fsp.writeFile('error_reenc.txt', errorData);
+                        console.log('Error log written successfully.');
+                    }
+                    if (fs.existsSync(outputPath)) {
+                        fs.unlinkSync(outputPath);
+                    }
+
+                    resolve();
+
                 } catch (writeErr) {
                     console.error('Error writing error log:', writeErr.message);
                 }
@@ -693,7 +763,7 @@ function getVideoMetadata(videofilename) {
 async function burnThemInClose(filename, location, view){
 
     await waitForFile(filename);
-
+if(!filename.slice(0,-4).includes("wbsusbs")){
     try {
         var d = new Date();
         var hhmmss = ("00" + d.getHours()).slice(-2) + ":" +
@@ -734,6 +804,7 @@ async function burnThemInClose(filename, location, view){
       } catch (err) {
         console.error('Error:', err);
       }
+    }
 }
 
 function getLocationSubstring(input, searchCharacter) {
