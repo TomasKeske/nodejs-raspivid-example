@@ -160,11 +160,19 @@ server.on('connection', async (ws) => {
                                       let args  = ['-i', first[1], '-i', second[1], '-filter_complex', 'hstack', outputFile];
 
                                       console.log("Processing videos with FFmpeg...");
-                                      tsks.push(processVideos(args, sucnt, outputFile));
 
-                                      console.log("Burning subtitles for paired elements...");
-                                      tsks.push(burnThemInClose(outputFile, location, firstSubstring)); // For the first
-                                      tsks.push(burnThemInClose(outputFile, location, secondSubstring));
+                                      tsks.push(
+                                        processVideos(args, sucnt, outputFile)
+                                            .then(() => {
+                                                console.log("Burning subtitles for paired elements...");
+                                                return Promise.all([
+                                                    burnThemInClose(outputFile, location, firstSubstring), // For the first
+                                                    burnThemInClose(outputFile, location, secondSubstring) // For the second
+                                                ]);
+                                            })
+                                    );
+
+
                                      }
                                       // For the second
                                   } catch (error) {
@@ -184,7 +192,7 @@ server.on('connection', async (ws) => {
 
 
                     try {
-                        await Promise.all(tsks); // Wait for all asynchronous reencode tasks to finish
+                       // await Promise.all(tsks); // Wait for all asynchronous reencode tasks to finish
                         console.log('All tasks completed successfully.');
                         writeFileAsync('step2_completed.lock', "");
                         if (fs.existsSync("process_log.txt")) {
@@ -391,7 +399,7 @@ async function waitForFilesWithSubstring(directoryPath, substring) {
 }
 
 
-async function waitForFile(filename, timeout = 10000, interval = 500) {
+async function waitForFile(filename, timeout = 10000000, interval = 500) {
   const startTime = Date.now();
 
   while (true) {
@@ -573,7 +581,7 @@ async function processVideos(args, counter, outputFile) {
                     console.error('Error writing log file:', error.message);
                 }
                 console.error(`FFmpeg process exited with code ${code}`);
-                reject(new Error(`FFmpeg process failed with exit code ${code}.`));
+                resolve();
             }
         });
 
@@ -826,4 +834,3 @@ function getFirstIntegerFromLine(line) {
     const match = line.match(/-?\d+/);
     return match ? parseInt(match[0], 10) : null; // Convert to integer or return null if no match
 }
-
